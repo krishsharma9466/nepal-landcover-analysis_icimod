@@ -1,0 +1,106 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from collections import Counter
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.ops import unary_union
+
+# file paths
+raster_path = r"D:\land cover of Nepal\nlcms_2016\data\lc2016.tif"
+boundary_path = r"D:\Local_admin_Nepal\GapaNapa_84.shp"
+
+# load boundary
+gdf = gpd.read_file(boundary_path)
+
+# open raster and clip
+with rasterio.open(raster_path) as src:
+
+    if gdf.crs != src.crs:
+        gdf = gdf.to_crs(src.crs)
+
+    geom = unary_union(gdf.geometry)
+    shapes = [geom.__geo_interface__]
+
+    data, transform = mask(src, shapes, crop=True)
+    data = data[0]
+
+    nodata = src.nodata if src.nodata is not None else 0
+
+    res = src.res
+    pixel_area = (res[0] * res[1]) / 10000
+
+# remove background
+data = np.ma.masked_where(data <= 0, data)
+
+# land cover classes
+classes = {
+    1: "Waterbody",
+    2: "Glacier",
+    3: "Snow",
+    4: "Forest",
+    5: "Riverbed",
+    6: "Built-up",
+    7: "Cropland",
+    8: "Bare soil",
+    9: "Bare rock",
+    10: "Grassland",
+    11: "Other Wooded Land"
+}
+
+# valid pixels
+valid = data.compressed()
+
+# count pixels
+counts = Counter(valid)
+total_pixels = sum(counts.values())
+
+# build table
+rows = []
+for k, v in counts.items():
+    name = classes.get(k, "Unknown")
+    rows.append([
+        k,
+        name,
+        v,
+        v * pixel_area,
+        (v / total_pixels) * 100
+    ])
+
+df = pd.DataFrame(rows, columns=[
+    "Class", "Name", "Pixel_Count", "Area_ha", "Percent"
+])
+
+df = df.sort_values("Percent", ascending=False)
+
+# print results
+print("\nLand Cover Statistics (2016)")
+print(df)
+print("\nTotal Pixels:", total_pixels)
+
+# save csv
+df.to_csv(r"D:\land cover of Nepal\nlcms_2016\summary.csv", index=False)
+
+# map
+plt.figure(figsize=(10, 6))
+plt.imshow(data, cmap="terrain")
+plt.title("Land Cover Map of 2026")
+plt.xticks([])
+plt.yticks([])
+plt.show()
+
+# bar chart
+plt.figure(figsize=(7, 5))
+plt.barh(df["Name"], df["Percent"], color="green")
+plt.title("Land Cover Proportion (2016)")
+plt.xlabel("Percent")
+plt.gca().invert_yaxis()
+plt.show()
+
+# pie chart
+plt.figure(figsize=(6, 6))
+plt.pie(df["Percent"], labels=df["Name"], autopct="%1.1f%%")
+plt.title("Land Cover Distribution (2016)")
+plt.show()
